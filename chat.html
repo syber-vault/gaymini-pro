@@ -1258,7 +1258,7 @@ async function sendMessage() {
     return;
   }
 
-  // ---- ভিডিও মোড (Google Flow & Veo 3.1) ----
+  // ---- ভিডিও মোড (মোশন ভিডিও: ৮ সেকেন্ড, 1080p, মিউজিক সহ) ----
   if (mode === 'video') {
     if (!text && !attachedImage) {
       status.textContent = 'ভিডিওর জন্য প্রম্পট লিখো (যেমন: cinematic drone shot of cyberpunk city in rain)';
@@ -1308,14 +1308,14 @@ async function sendMessage() {
         const s = await sres.json();
         if (s.status === 'done' && s.video_url) { done = s; break; }
         if (s.status === 'error') throw new Error(s.error || s.message || 'Video generation failed');
-        const prog = s.progress || 'Veo ভিডিও রেন্ডার করছে…';
+        const prog = s.progress || 'মোশন ভিডিও রেন্ডার করছে…';
         thinking.innerHTML = '<span class="typing"><span></span><span></span><span></span></span> ' + prog;
         status.textContent = prog;
       }
       if (!done) throw new Error('ভিডিও তৈরিতে অনেক সময় লাগছে — একটু পরে আবার চেষ্টা করো');
 
       thinking.parentElement.parentElement.remove();
-      addVideoMsg(done.video_url, 'মোশন ভিডিও ✓ (৫ সেকেন্ড, 720p)', prompt);
+      addVideoMsg(done.video_url, 'মোশন ভিডিও ✓ (৮ সেকেন্ড, 1080p, মিউজিক সহ)', prompt);
       history.push({ role: 'assistant', content: '[ভিডিও সম্পন্ন হয়েছে: ' + done.video_url + ']' });
       saveHistory();
       status.textContent = 'ভিডিও সম্পন্ন হয়েছে ✓';

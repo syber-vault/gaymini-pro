@@ -464,15 +464,29 @@ def run_video_job(job_id: str, prompt: str, image_bytes: bytes | None, origin: s
                     logger.warning(f"Flow image fallback for video failed: {ef2}")
 
         if base_img_path and base_img_path.is_file():
-            set_progress("Cinematic animation compile hocche (720p 25fps H.264)...")
+            set_progress("Cinematic animation compile hocche (1080p 25fps H.264 + music)...")
             try:
                 out_vid = UPLOADS_DIR / f"motion-{uuid.uuid4().hex[:8]}.mp4"
+                # 8s 1080p slow cinematic zoom + gentle ambient music bed.
+                # NOTE: this is still a motion video (one still image
+                # animated with ffmpeg), NOT Veo — Veo with native audio
+                # needs a live signed-in Flow browser tab / official API
+                # key, which a headless server cannot do. The music bed
+                # gives the clip sound; the label in the UI says so.
                 cmd = [
                     "ffmpeg", "-y", "-loop", "1", "-i", str(base_img_path),
-                    "-filter_complex", "zoompan=z='min(zoom+0.0018,1.35)':d=125:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=25,format=yuv420p",
-                    "-t", "5", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(out_vid)
+                    "-f", "lavfi", "-i", "sine=frequency=110:duration=8",
+                    "-f", "lavfi", "-i", "sine=frequency=164.81:duration=8",
+                    "-f", "lavfi", "-i", "sine=frequency=220:duration=8",
+                    "-f", "lavfi", "-i", "sine=frequency=277.18:duration=8",
+                    "-filter_complex",
+                    "[0:v]zoompan=z='min(zoom+0.0012,1.25)':d=200:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=25,format=yuv420p[v];"
+                    "[1:a][2:a][3:a][4:a]amix=inputs=4:duration=first:dropout_transition=0,volume=0.12,afade=t=in:st=0:d=1,afade=t=out:st=7:d=1[a]",
+                    "-map", "[v]", "-map", "[a]",
+                    "-t", "8", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "128k", "-shortest", str(out_vid)
                 ]
-                subprocess.run(cmd, timeout=60, check=True)
+                subprocess.run(cmd, timeout=120, check=True)
                 if out_vid.is_file() and out_vid.stat().st_size > 0:
                     local_file = out_vid
             except Exception as ve:

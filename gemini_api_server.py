@@ -724,6 +724,7 @@ def serve_upload(name):
 
 
 @app.route("/edit-image", methods=["POST"])
+@app.route("/api/v1/edit", methods=["POST"])
 def edit_image():
     import subprocess
 
@@ -752,6 +753,7 @@ def edit_image():
 
 
 @app.route("/edit-status/<job_id>", methods=["GET"])
+@app.route("/api/v1/image-status/<job_id>", methods=["GET"])
 def edit_status(job_id):
     job = _EDIT_JOBS.get(job_id)
     if job is None:
@@ -806,19 +808,21 @@ def _host_result_file(path, origin):
     return f"{origin}/uploads/{Path(path).name}", True
 
 
-def _run_edit_job(job_id, data, ext, prompt, origin):
-    """Whole edit pipeline in a background thread (edit takes 1-4 minutes and
-    the public tunnel drops long-held connections, so the page polls instead
-    of waiting on one request)."""
+def _azad_edit_and_host(data, ext, prompt, origin, progress):
+    """Azad editor pipeline, shared by /edit-image and by the Google-edit
+    fallback: save + downscale the input, let the Azad editor API fetch it
+    from {origin}/uploads/<name>, compress the result and host it.
+    Returns {"image_url", "size", "host"}; raises RuntimeError on failure.
+    NOTE: the editor API must fetch the input from a PUBLIC url, so origin
+    has to be the public (Render/tunnel) address, never http://127.0.0.1.
+    """
     import subprocess
-
-    def progress(msg):
-        _EDIT_JOBS[job_id]["progress"] = msg
 
     name = f"{uuid.uuid4().hex}.{ext if ext != 'jpeg' else 'jpg'}"
     upath = UPLOADS_DIR / name
     outpath = UPLOADS_DIR / f"edited-{name}.png"
     jpgpath = UPLOADS_DIR / f"edited-{Path(name).stem}.jpg"
+    smallpath = None
     try:
         upath.write_bytes(data)
         # ফোনের ছবি বড় হলে এডিটরকে পাঠানোর আগেই ছোট করে নাও (সবচেয়ে বড়
@@ -870,21 +874,15 @@ def _run_edit_job(job_id, data, ext, prompt, origin):
             logger.warning("ffmpeg compress failed, uploading PNG as-is: %s", e)
         progress("ছবি তৈরি — ফোনে পাঠানো হচ্ছে...")
         url, keep = _host_result_file(upload_path, origin)
-        _EDIT_JOBS[job_id] = {"status": "done", "image_url": url,
-                              "size": upload_path.stat().st_size,
-                              "host": "tunnel" if keep else "tmpfiles"}
+        result = {"image_url": url, "size": upload_path.stat().st_size,
+                  "host": "tunnel" if keep else "tmpfiles"}
         if keep:
             _EDIT_FALLBACK_FILES.add(str(upload_path))
-    except Exception as e:
-        logger.warning("edit job %s failed: %s", job_id, e)
-        _EDIT_JOBS[job_id] = {"status": "error", "message": str(e)}
+        return result
     finally:
         cleanup = [upath, outpath]
-        try:
-            if smallpath is not None:
-                cleanup.append(smallpath)
-        except NameError:
-            pass
+        if smallpath is not None:
+            cleanup.append(smallpath)
         for p in cleanup:
             try:
                 p.unlink(missing_ok=True)
@@ -895,6 +893,21 @@ def _run_edit_job(job_id, data, ext, prompt, origin):
                 jpgpath.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+def _run_edit_job(job_id, data, ext, prompt, origin):
+    """Whole edit pipeline in a background thread (edit takes 1-4 minutes and
+    the public tunnel drops long-held connections, so the page polls instead
+    of waiting on one request)."""
+    def progress(msg):
+        _EDIT_JOBS[job_id]["progress"] = msg
+
+    try:
+        result = _azad_edit_and_host(data, ext, prompt, origin, progress)
+        _EDIT_JOBS[job_id] = {"status": "done", **result}
+    except Exception as e:
+        logger.warning("edit job %s failed: %s", job_id, e)
+        _EDIT_JOBS[job_id] = {"status": "error", "message": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -1067,6 +1080,28 @@ def _run_image_gen_job(job_id, prompt, origin, data=None, kind="generate", model
                 flow_fail = str(ef)
                 logger.warning(f"Google Flow fallback failed: {ef}")
 
+        # Google edit fallback: if Gemini did not return an edited image,
+        # fall back to the Azad editor (which does not need the Google
+        # session) instead of failing. Uploading an image to Gemini web
+        # hangs from servers, so this fallback is what makes Google edit
+        # actually work instead of timing out.
+        if not imgs and kind == "google-edit":
+            try:
+                progress("Google এডিট হয়নি — Azad এডিটর দিয়ে চেষ্টা করছে...")
+                ext = "jpg"
+                if data[:8].startswith(b"\x89PNG"):
+                    ext = "png"
+                elif data[:6] in (b"GIF87a", b"GIF89a"):
+                    ext = "gif"
+                elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+                    ext = "webp"
+                result = _azad_edit_and_host(data, ext, prompt, origin, progress)
+                _EDIT_JOBS[job_id] = {"status": "done", **result,
+                                      "kind": kind, "source": "azad-fallback"}
+                return
+            except Exception as ef:
+                logger.warning("Google-edit Azad fallback failed: %s", ef)
+
         # Fallback 2: Found image in response text
         if not imgs:
             text = (getattr(resp, "text", "") or "").strip()
@@ -1145,6 +1180,7 @@ def _run_image_gen_job(job_id, prompt, origin, data=None, kind="generate", model
 
 
 @app.route("/generate-image", methods=["POST"])
+@app.route("/api/v1/image", methods=["POST"])
 def generate_image():
     """Nano Banana Pro / Google Flow: make a new image from a text prompt (async job)."""
     prompt = (request.form.get("prompt") or "").strip()
@@ -1165,6 +1201,7 @@ def generate_image():
 
 
 @app.route("/edit-image-google", methods=["POST"])
+@app.route("/api/v1/edit-google", methods=["POST"])
 def edit_image_google():
     """Google image edit: edit an uploaded image with Gemini (async job)."""
     prompt = (request.form.get("prompt") or "").strip()
@@ -1193,6 +1230,7 @@ def edit_image_google():
 # Google Flow (Veo & Imagen) & Auto-Login Sync API
 # ---------------------------------------------------------------------------
 @app.route("/generate-video", methods=["POST"])
+@app.route("/api/v1/video", methods=["POST"])
 def generate_video():
     """Generate a video using Google Flow / Veo 3.1 (async job)."""
     data = request.get_json(silent=True) or {}
@@ -1214,6 +1252,7 @@ def generate_video():
 
 
 @app.route("/video-status/<job_id>", methods=["GET"])
+@app.route("/api/v1/video-status/<job_id>", methods=["GET"])
 def video_status(job_id: str):
     """Poll video generation progress."""
     job = flow_engine.get_video_job(job_id)
@@ -1580,6 +1619,7 @@ def list_models():
 
 
 @app.route("/health", methods=["GET"])
+@app.route("/api/v1/health", methods=["GET"])
 def health_check():
     cookies = load_cookies()
     has_psid = bool(cookies.get("__Secure-1PSID"))
@@ -1633,6 +1673,101 @@ def event_logging():
     return jsonify({"status": "ok", "logged": True})
 
 
+# ---------------------------------------------------------------------------
+# Public API v1 — one clean namespace for everything the chat UI can do.
+# Every feature has an API: chat, image, edit (Azad + Google), video,
+# auth sync and health. Async jobs return {"job": "<id>"}; poll the
+# matching status endpoint (or the unified /api/v1/jobs/<job>) until
+# status is "done" or "error". Full docs: GET /api/docs (HTML) and
+# GET /api/openapi.json. No API key is required unless the server was
+# started with GAYMINI_API_KEY (then send x-api-key on every call).
+# ---------------------------------------------------------------------------
+API_V1_DOCS = [
+    {"method": "GET", "path": "/api/v1/health", "desc": "Server + Google session status (account_status 1000 = OK, 1016 = cookies expired)."},
+    {"method": "POST", "path": "/api/v1/chat", "desc": "Chat (OpenAI-compatible). JSON {model: 'gemini-4-argon'|'gemini-4-hydrogen', messages: [{role, content}]} → chat completion."},
+    {"method": "POST", "path": "/api/v1/image", "desc": "New image (Nano Banana Pro; model=flow tries Flow Imagen first). Form {prompt, model?, origin} → {job}. Poll /api/v1/image-status/<job>."},
+    {"method": "POST", "path": "/api/v1/edit", "desc": "Edit an uploaded image with the Azad editor (works without Google cookies). Multipart {image, prompt, origin} → {job}. Poll /api/v1/image-status/<job>."},
+    {"method": "POST", "path": "/api/v1/edit-google", "desc": "Edit an uploaded image with Gemini/Nano Banana Pro (needs a valid Google session; falls back to the Azad editor automatically). Multipart {image, prompt, origin} → {job}."},
+    {"method": "POST", "path": "/api/v1/video", "desc": "Video. Form {prompt, origin} (+ optional image file) → {job}. Text-to-video makes a keyframe with Nano Banana Pro, then an 8s 1080p motion video with music. Poll /api/v1/video-status/<job>. NOTE: motion video, not Veo — Veo with native audio needs a live Flow browser tab."},
+    {"method": "GET", "path": "/api/v1/image-status/<job>", "desc": "Image/edit job status → {status: working|done|error, image_url?, message?}."},
+    {"method": "GET", "path": "/api/v1/video-status/<job>", "desc": "Video job status → {status: working|done|error, video_url?, error?}."},
+    {"method": "GET", "path": "/api/v1/jobs/<job>", "desc": "Unified job status — checks image/edit jobs first, then video jobs."},
+    {"method": "POST", "path": "/api/gemini/auth/sync", "desc": "Sync fresh Gemini cookies. JSON {cookies: [...] or {name: value}} → new session."},
+    {"method": "POST", "path": "/api/flow/auth/sync", "desc": "Sync fresh Flow cookies. Same format as above."},
+    {"method": "GET", "path": "/api/gemini/auth/status", "desc": "Gemini auth status."},
+    {"method": "GET", "path": "/api/flow/auth/status", "desc": "Flow auth status."},
+    {"method": "GET", "path": "/api/docs", "desc": "This documentation (HTML)."},
+    {"method": "GET", "path": "/api/openapi.json", "desc": "Machine-readable API spec (JSON)."},
+]
+
+
+@app.route("/api/v1/jobs/<job_id>", methods=["GET"])
+def api_job_status(job_id):
+    job = _EDIT_JOBS.get(job_id)
+    if job is not None:
+        return jsonify(job)
+    job = flow_engine.get_video_job(job_id)
+    if job is not None:
+        return jsonify(job)
+    return jsonify({"error": "job not found"}), 404
+
+
+@app.route("/api/v1", methods=["GET"])
+def api_v1_index():
+    return jsonify({"name": "Gaymini Pro API", "version": "v1",
+                    "docs": "/api/docs", "openapi": "/api/openapi.json",
+                    "endpoints": API_V1_DOCS})
+
+
+@app.route("/api/openapi.json", methods=["GET"])
+def api_openapi():
+    paths = {}
+    for ep in API_V1_DOCS:
+        if ep["path"].startswith("/api/openapi") or ep["path"].startswith("/api/docs"):
+            continue
+        paths.setdefault(ep["path"], {})[ep["method"].lower()] = {
+            "summary": ep["desc"], "responses": {"200": {"description": "OK"}}}
+    return jsonify({"openapi": "3.0.0",
+                    "info": {"title": "Gaymini Pro API", "version": "1.0.0"},
+                    "paths": paths})
+
+
+@app.route("/api/docs", methods=["GET"])
+def api_docs():
+    rows = "".join(
+        f"<tr><td><b>{e['method']}</b></td><td><code>{e['path']}</code></td><td>{e['desc']}</td></tr>"
+        for e in API_V1_DOCS)
+    return f"""<!DOCTYPE html><html lang="bn"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gaymini Pro API — Docs</title>
+<style>body{{font-family:system-ui,sans-serif;background:#0f0a1e;color:#eee;margin:0;padding:24px;max-width:900px}}
+h1{{color:#c084fc}}h2{{color:#c084fc;margin-top:32px}}table{{border-collapse:collapse;width:100%}}
+td,th{{border:1px solid #444;padding:8px 10px;text-align:left;vertical-align:top}}th{{background:#2a1845}}
+code{{background:#241a38;padding:2px 6px;border-radius:4px}}pre{{background:#1a1226;padding:14px;border-radius:8px;overflow:auto}}
+a{{color:#c084fc}}</style></head><body>
+<h1>Gaymini Pro API</h1>
+<p>চ্যাট, ছবি, এডিট, ভিডিও — সব ফিচারের API। Async job গুলো <code>{{"job": "…"}}</code> দেয়;
+status <code>done</code> না হওয়া পর্যন্ত সংশ্লিষ্ট status endpoint-এ poll করো।
+API key লাগে না, যদি না সার্ভার <code>GAYMINI_API_KEY</code> দিয়ে চালু করা হয় (তখন প্রতিটা কলে <code>x-api-key</code> হেডার দাও)।</p>
+<h2>Endpoints</h2>
+<table><tr><th>Method</th><th>Path</th><th>কী করে</th></tr>{rows}</table>
+<h2>উদাহরণ</h2>
+<pre>curl -X POST $BASE/api/v1/chat -H 'Content-Type: application/json' \\
+  -d '{{"model":"gemini-4-argon","messages":[{{"role":"user","content":"hi"}}]}}'
+
+curl -X POST $BASE/api/v1/image -F prompt="a cute orange cat" -F origin=$BASE
+# → {{"job":"…"}} তারপর:
+curl $BASE/api/v1/image-status/&lt;job&gt;
+
+curl -X POST $BASE/api/v1/video -F prompt="a cat in rain" -F origin=$BASE
+curl $BASE/api/v1/video-status/&lt;job&gt;
+
+curl -X POST $BASE/api/v1/edit -F image=@photo.jpg -F prompt="make it sunset" -F origin=$BASE</pre>
+<p>ভিডিও এখন ৮ সেকেন্ড, 1080p, মিউজিকসহ মোশন ভিডিও (Veo নয় — আসল Veo-তে নিজের
+অডিওসহ ভিডিও বানাতে লাইভ Flow ব্রাউজার ট্যাব বা অফিসিয়াল API key লাগে)।</p>
+</body></html>"""
+
+
 @app.route("/v1/messages/count_tokens", methods=["POST", "OPTIONS"])
 def count_tokens():
     data = request.get_json(force=True, silent=True) or {}
@@ -1651,6 +1786,7 @@ def count_tokens():
 # ---------------------------------------------------------------------------
 @app.route("/v1/chat/completions", methods=["POST"])
 @app.route("/chat/completions", methods=["POST"])
+@app.route("/api/v1/chat", methods=["POST"])
 def chat_completions():
     data = request.get_json(force=True, silent=True) or {}
     messages = data.get("messages", [])
