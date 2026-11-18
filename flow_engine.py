@@ -277,7 +277,7 @@ class FlowClient:
             f"{FLOW_BATCH_EXECUTE}?rpcids=ogiZ0b",
             headers=headers,
             data=body_data,
-            timeout=8
+            timeout=60
         )
 
         if r.status_code != 200:
@@ -304,7 +304,15 @@ class FlowClient:
         }
 
     def generate_video_flow(self, prompt: str, image_bytes: bytes | None = None) -> dict[str, Any]:
-        """Generate video via Google Flow Veo (YhhmEf RPC) with jwpduf poll."""
+        """Generate video via Google Flow Veo (YhhmEf RPC) with jwpduf poll.
+
+        NOTE: this only *submits* the job — the jwpduf polling loop that
+        waits for Veo to finish is not implemented yet, so run_video_job()
+        does not call it. Video today is the Cinematic Motion Engine:
+        a keyframe image (Gemini / Flow Imagen / your upload) animated
+        with ffmpeg zoompan into a 5s 720p mp4. Do not label that output
+        as "Veo 3.1" in the UI.
+        """
         project = self.ensure_project()
         xsrf = self.get_xsrf_token()
 
@@ -480,9 +488,13 @@ def run_video_job(job_id: str, prompt: str, image_bytes: bytes | None, origin: s
                     "progress": "Video shofolbhabe generate hoyeche!"
                 }
         else:
+            # No keyframe could be made: text-to-video needs a working
+            # Gemini/Flow session to create the first frame. Image-to-video
+            # (upload a photo first) does not need it and keeps working.
             err_msg = (
-                "Video toiri kora jayni. "
-                "Google Account session refresh korun ba '🔑 Google & Flow Sync' theke notun cookie sync korun."
+                "Video toiri kora jayni — prothom frame banano jayni. "
+                "Google Account session expired hoyeche; '🔑 Google & Flow Sync' theke notun cookie sync korun, "
+                "ba ekta chhobi upload diye image-to-video chesta korun."
             )
             with _JOBS_LOCK:
                 _VIDEO_JOBS[job_id] = {
