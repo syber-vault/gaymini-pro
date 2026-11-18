@@ -49,7 +49,7 @@ _LOOP_THREAD: Optional[threading.Thread] = None
 _INIT_LOCK = threading.Lock()
 _ACTIVE_CLIENT: Optional[GeminiClient] = None
 _LAST_ROTATION_TIME: float = 0.0
-_LAST_ACCOUNT_STATUS = 1000
+_LAST_ACCOUNT_STATUS = 1016  # default: UNAUTHENTICATED until a client init proves otherwise (1000 = AVAILABLE). Never default to 1000 — /health must not claim "healthy" before auth is verified.
 
 TOOL_CALL_REGEX = re.compile(
     r"```(?:tool_call|json_tool|tool)?\s*(\{[\s\S]*?\})\s*```|<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>",
@@ -251,13 +251,17 @@ async def get_gemini_client() -> GeminiClient:
     client = GeminiClient(secure_1psid=psid, secure_1psidts=psidts, cookies=extra_cookies)
     await client.init(verbose=True)
 
+    # NOTE: GeminiClient has no check_account_status() method. Its init()
+    # already runs _fetch_user_status() and stores the real result in
+    # client.account_status (1000 = AVAILABLE, 1016 = UNAUTHENTICATED).
+    # Never default to 1000 here — that used to make /health report
+    # "healthy" while the session was actually expired.
     try:
-        status = await client.check_account_status()
-        _LAST_ACCOUNT_STATUS = int(status)
-        logger.info(f"Gemini client initialized. Account status: {_LAST_ACCOUNT_STATUS} ({status.name})")
+        _LAST_ACCOUNT_STATUS = int(getattr(client, "account_status", 1016))
+        logger.info("Gemini client initialized. Account status: %s", _LAST_ACCOUNT_STATUS)
     except Exception as e:
-        logger.warning(f"Account status check failed: {e}")
-        _LAST_ACCOUNT_STATUS = 1000
+        logger.warning("Account status read failed: %s", e)
+        _LAST_ACCOUNT_STATUS = 1016
 
     _ACTIVE_CLIENT = client
     _LAST_ROTATION_TIME = time.time()
@@ -1022,6 +1026,7 @@ def _run_image_gen_job(job_id, prompt, origin, data=None, kind="generate", model
             imgs.extend(getattr(c, "generated_images", None) or [])
 
         # Fallback 1: Google Flow Imagen 3 if Gemini didn't return images
+        flow_fail = ""
         if not imgs and kind == "generate":
             try:
                 progress("Google Flow (Imagen 3) backup diye chhobi banano hocche...")
@@ -1059,6 +1064,7 @@ def _run_image_gen_job(job_id, prompt, origin, data=None, kind="generate", model
                             pass
                         return
             except Exception as ef:
+                flow_fail = str(ef)
                 logger.warning(f"Google Flow fallback failed: {ef}")
 
         # Fallback 2: Found image in response text
@@ -1098,7 +1104,10 @@ def _run_image_gen_job(job_id, prompt, origin, data=None, kind="generate", model
             clean = re.sub(r"<[^>]+>", " ", text)
             clean = re.sub(r"\s+", " ", clean).strip()
             if "signed out" in clean.lower() or "not available" in clean.lower():
-                raise RuntimeError("Google Gemini session unauthenticated ba __Secure-1PSIDTS meyadottirno. Chat cholleo chhobi bananur jonno Gemini-te active cookie proyojon. 🔑 botam theke gemini.google.com-er cookie sync korun.")
+                detail = "Google Gemini session unauthenticated ba __Secure-1PSIDTS meyadottirno. Chat cholleo chhobi bananur jonno Gemini-te active cookie proyojon. 🔑 botam theke gemini.google.com-er cookie sync korun."
+                if flow_fail:
+                    detail += f" (Flow backup-o fail: {flow_fail[:120]})"
+                raise RuntimeError(detail)
             raise RuntimeError("Google chhobi banayni: " + (clean[:200] if clean
                               else "Kono chhobi asheni — ei account-e chhobi banano ekhono chalu hoyni."))
         name = f"nano-{uuid.uuid4().hex[:12]}.png"
@@ -1575,17 +1584,43 @@ def health_check():
     cookies = load_cookies()
     has_psid = bool(cookies.get("__Secure-1PSID"))
     has_flow = bool(cookies.get("OSID") or cookies.get("__Secure-OSID") or has_psid)
+    gemini_ok = _LAST_ACCOUNT_STATUS == 1000
+    # Flow auth is checked at most once every 120s (it is a live request to
+    # flow.google.com). A failed/expired Flow session is reported, not hidden.
+    flow_ok = _cached_flow_auth()
+    healthy = gemini_ok or flow_ok
     return jsonify({
-        "status": "healthy",
+        "status": "healthy" if healthy else "degraded",
         "account_status": _LAST_ACCOUNT_STATUS,
+        "gemini_authenticated": gemini_ok,
+        "flow_authenticated": flow_ok,
         "gemini_client_ready": _ACTIVE_CLIENT is not None,
         "cookies_configured": has_psid,
         "google_flow_ready": has_flow,
         "auth_required": bool(API_KEY),
+        "auth_error": None if healthy else "Google session expired — re-sync cookies from gemini.google.com / flow.google.com via the 🔑 button in chat.",
         "max_concurrency": MAX_CONCURRENCY,
         "uptime_seconds": int(time.time() - START_TIME),
         "models": ["gemini-4-argon", "gemini-4-hydrogen", "google-flow-veo", "google-flow-imagen"],
     })
+
+
+_FLOW_AUTH_CACHE = {"at": 0.0, "ok": False}
+
+
+def _cached_flow_auth() -> bool:
+    """Cached Flow session check (max 1 live check per 120s)."""
+    now = time.time()
+    if now - _FLOW_AUTH_CACHE["at"] < 120:
+        return _FLOW_AUTH_CACHE["ok"]
+    ok = False
+    try:
+        res = flow_engine.FlowClient().check_auth()
+        ok = bool(res.get("authenticated"))
+    except Exception as e:
+        logger.warning("Flow auth check failed: %s", e)
+    _FLOW_AUTH_CACHE.update({"at": now, "ok": ok})
+    return ok
 
 
 @app.route("/stats", methods=["GET"])
