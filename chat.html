@@ -90,7 +90,7 @@
   .settings {
     margin: 0 18px; overflow: hidden; max-height: 0; transition: max-height .3s ease;
   }
-  .settings.open { max-height: 260px; }
+  .settings.open { max-height: 520px; overflow-y: auto; }
   .settings-card {
     background: #12121c; border: 1px solid #23232f; border-radius: 18px;
     padding: 14px 16px;
@@ -251,8 +251,44 @@
     width: 100%; max-width: 520px; max-height: 88vh; overflow-y: auto; padding: 20px; box-shadow: 0 16px 40px rgba(0,0,0,.6);
   }
   .video-card { width: 100%; max-width: 540px; }
-  .video-card video { width: 100%; border-radius: 12px; border: 1px solid var(--stroke); background: #000; }
-  .mode-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; }
+  .video-card video { width: 100%; border-radius: 12px; border: 1px solid var(--stroke); background: #000; box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+
+  /* ---------- Mobile (phone-first: most users are on phones) ---------- */
+  @media (max-width: 560px) {
+    .topbar { padding: 12px 12px 8px; gap: 8px; }
+    .logo { width: 34px; height: 34px; border-radius: 10px; font-size: 17px; }
+    .brand { font-size: 15px; }
+    .pill { font-size: 11px; padding: 5px 9px; }
+    .new-chat-btn { font-size: 0; padding: 8px 9px; }
+    .new-chat-btn svg { margin-right: 0 !important; }
+    .icon-btn { width: 34px; height: 34px; }
+    #chat { padding: 8px 12px 14px; gap: 14px; }
+    .hero { padding: 12px 4px; }
+    .hero .spark { font-size: 32px; }
+    .hero p { font-size: 13.5px; }
+    .suggest { grid-template-columns: 1fr; gap: 8px; margin-top: 16px; }
+    .bubble { max-width: 92%; font-size: 14px; }
+    .bottom { padding: 6px 12px calc(12px + env(safe-area-inset-bottom)); }
+    .mode-btn { padding: 7px 10px; font-size: 12px; white-space: nowrap; }
+    .model-switch button { padding: 7px 12px; font-size: 12px; white-space: nowrap; }
+    .engine-btn { white-space: nowrap; }
+    .composer { padding: 6px 6px 6px 14px; }
+    .composer textarea { font-size: 16px; } /* 16px stops iOS auto-zoom */
+    .settings { margin: 0 12px; }
+    .auth-card { padding: 16px; }
+  }
+  @media (max-width: 380px) {
+    .pill #status-text { display: none; } /* keep only the dot on tiny screens */
+    .brand { font-size: 14px; }
+  }
+  /* NOTE: .mode-row is styled once above as a centred pill. Do NOT
+     redeclare its background/border here — an earlier duplicate rule
+     wiped the pill styling and broke the theme on phones. Only add
+     small-screen scrolling behaviour. */
+  .mode-row { overflow-x: auto; scrollbar-width: none; max-width: 100%; }
+  .mode-row::-webkit-scrollbar { display: none; }
+  .model-switch { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .model-switch::-webkit-scrollbar { display: none; }
   .acc-item {
     display: flex; align-items: center; justify-content: space-between;
     padding: 8px 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--stroke);
@@ -432,7 +468,7 @@
   <div class="settings" id="settings">
     <div class="settings-card">
       <label>API ঠিকানা</label>
-      <input type="url" id="api-url" value="" placeholder="https://e887fab5b73170.app.lhr.life">
+      <input type="url" id="api-url" value="" placeholder="খালি রাখলে এই পেজের লিংকই ব্যবহার হবে">
       <label>API Key</label>
       <input type="password" id="api-key" value="">
       <p>ঠিকানা খালি রাখলে এই পেজের সার্ভারই ব্যবহার হবে। এই ফাইলটা কাউকে দিও না — ভেতরে তোমার API Key আছে।</p>
@@ -512,6 +548,17 @@
 
 <script>
 let model = 'gemini-4-argon';
+// API base: settings URL, else this page's own origin. The old hardcoded
+// localhost.run tunnel link is gone — free tunnel links die in hours, so
+// never hardcode one again. If opened as a plain file, base is '' and
+// requests fail with a clear message instead of hitting a dead link.
+function apiBase(rawUrl) {
+  const u = (rawUrl || '').trim();
+  if (u) return u.replace(/\/$/, '');
+  const o = window.location.origin || '';
+  if (o.startsWith('http')) return o.replace(/\/$/, '');
+  return '';
+}
 let history = []; // {role, content} — OpenAI ফরম্যাটে পাঠানো হয়
 let attachedImage = null; // ছবি এডিটের জন্য বেছে নেওয়া ফাইল
 let mode = 'chat'; // chat | generate | edit | video
@@ -822,7 +869,7 @@ async function refreshAuthStatus(svc) {
   if (box) box.innerHTML = `${isFlow ? 'Flow' : 'Gemini'} স্ট্যাটাস যাচাই হচ্ছে…`;
   try {
     const rawUrl = document.getElementById('api-url').value.trim();
-    const base = (rawUrl || (window.location.origin.startsWith('http') ? window.location.origin : '')).replace(/\/$/, '');
+    const base = apiBase(rawUrl);
     const endpoint = isFlow ? '/api/flow/auth/status' : '/api/gemini/auth/status';
     const res = await fetch(base + endpoint);
     const d = await res.json();
@@ -861,7 +908,7 @@ async function loadAccounts(svc) {
   if (!container) return;
   try {
     const rawUrl = document.getElementById('api-url').value.trim();
-    const base = (rawUrl || (window.location.origin.startsWith('http') ? window.location.origin : '')).replace(/\/$/, '');
+    const base = apiBase(rawUrl);
     const endpoint = isFlow ? '/api/flow/accounts' : '/api/gemini/accounts';
     const res = await fetch(base + endpoint);
     const d = await res.json();
@@ -900,7 +947,7 @@ async function switchAccount(svc, id) {
   const isFlow = svc === 'flow';
   try {
     const rawUrl = document.getElementById('api-url').value.trim();
-    const base = (rawUrl || (window.location.origin.startsWith('http') ? window.location.origin : '')).replace(/\/$/, '');
+    const base = apiBase(rawUrl);
     const endpoint = isFlow ? '/api/flow/accounts/switch' : '/api/gemini/accounts/switch';
     const res = await fetch(base + endpoint, {
       method: 'POST',
@@ -938,7 +985,7 @@ async function submitNewAccount(svc) {
   }
   try {
     const rawUrl = document.getElementById('api-url').value.trim();
-    const base = (rawUrl || (window.location.origin.startsWith('http') ? window.location.origin : '')).replace(/\/$/, '');
+    const base = apiBase(rawUrl);
     const endpoint = isFlow ? '/api/flow/accounts/add' : '/api/gemini/accounts/add';
     const res = await fetch(base + endpoint, {
       method: 'POST',
@@ -966,7 +1013,7 @@ async function deleteAccount(svc, id) {
   const isFlow = svc === 'flow';
   try {
     const rawUrl = document.getElementById('api-url').value.trim();
-    const base = (rawUrl || (window.location.origin.startsWith('http') ? window.location.origin : '')).replace(/\/$/, '');
+    const base = apiBase(rawUrl);
     const endpoint = isFlow ? '/api/flow/accounts/delete' : '/api/gemini/accounts/delete';
     const res = await fetch(base + endpoint, {
       method: 'POST',
@@ -999,7 +1046,7 @@ async function submitCookieSync(svc) {
   if (box) box.innerHTML = '⏳ কুকি সিঙ্ক হচ্ছে…';
   try {
     const rawUrl = document.getElementById('api-url').value.trim();
-    const base = (rawUrl || (window.location.origin.startsWith('http') ? window.location.origin : '')).replace(/\/$/, '');
+    const base = apiBase(rawUrl);
     const endpoint = isFlow ? '/api/flow/auth/sync' : '/api/gemini/auth/sync';
     const res = await fetch(base + endpoint, {
       method: 'POST',
@@ -1084,7 +1131,7 @@ async function sendMessage() {
   const input = document.getElementById('input');
   const text = input.value.trim();
   const rawUrl = document.getElementById('api-url').value.trim();
-  const base = (rawUrl || (window.location.origin.startsWith('http') ? window.location.origin : 'https://e887fab5b73170.app.lhr.life')).replace(/\/$/, '');
+  const base = apiBase(rawUrl);
   const apiKey = document.getElementById('api-key').value.trim();
   const btn = document.getElementById('send-btn');
   const status = document.getElementById('status');
@@ -1268,7 +1315,7 @@ async function sendMessage() {
       if (!done) throw new Error('ভিডিও তৈরিতে অনেক সময় লাগছে — একটু পরে আবার চেষ্টা করো');
 
       thinking.parentElement.parentElement.remove();
-      addVideoMsg(done.video_url, 'Google Flow • Veo 3.1 ভিডিও ✓', prompt);
+      addVideoMsg(done.video_url, 'মোশন ভিডিও ✓ (৫ সেকেন্ড, 720p)', prompt);
       history.push({ role: 'assistant', content: '[ভিডিও সম্পন্ন হয়েছে: ' + done.video_url + ']' });
       saveHistory();
       status.textContent = 'ভিডিও সম্পন্ন হয়েছে ✓';
@@ -1333,11 +1380,18 @@ loadHistory();
   const status = document.getElementById('status');
   try {
     const rawUrl = document.getElementById('api-url').value.trim();
-    const base = (rawUrl || (window.location.origin.startsWith('http') ? window.location.origin : 'https://e887fab5b73170.app.lhr.life')).replace(/\/$/, '');
+    const base = apiBase(rawUrl);
+    if (!base) throw new Error('no-server');
     const res = await fetch(base + '/health');
     const d = await res.json();
-    pillText.textContent = 'অনলাইন';
-    status.textContent = 'সার্ভার চালু ✓ — কুকি: ' + (d.cookies_configured ? 'আছে' : 'নেই') + ' — মডেল: Argon, Hydrogen, Veo, Imagen';
+    if (d.status === 'degraded' || d.gemini_authenticated === false) {
+      pill.classList.add('off');
+      pillText.textContent = 'কুকি মেয়াদোত্তীর্ণ';
+      status.textContent = 'Google সেশন মেয়াদোত্তীর্ণ — ছবি/ভিডিও বানাতে 🔑 বোতাম থেকে নতুন কুকি সিঙ্ক করো। চ্যাটও ঠিকমতো চলবে না।';
+    } else {
+      pillText.textContent = 'অনলাইন';
+      status.textContent = 'সার্ভার চালু ✓ — কুকি: ' + (d.cookies_configured ? 'আছে' : 'নেই') + ' — মডেল: Argon, Hydrogen, Veo, Imagen';
+    }
     refreshAuthStatus();
   } catch (e) {
     pill.classList.add('off');
