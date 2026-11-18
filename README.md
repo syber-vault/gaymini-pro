@@ -48,6 +48,31 @@ Never commit real cookie values.
 
 Built and maintained by [SIFAT](https://github.com/FX-SIF4T).
 
+## Google session cookies expire — read this first
+
+Image generation, image-to-video and chat all run through your Google
+session (Gemini web + Flow). Google sessions expire after hours/days.
+When they expire, `/health` reports `"status": "degraded"` and
+`"gemini_authenticated": false`, the chat pill turns red ("কুকি মেয়াদোত্তীর্ণ"),
+and image/video jobs fail fast with a clear message instead of hanging.
+
+Fix: open the chat, tap the 🔑 button, and re-sync fresh cookies from
+`gemini.google.com` (for chat + Nano Banana Pro images) and
+`flow.google.com` (for Flow Imagen). Never paste cookies in a chat message
+and never commit cookie files — `cookies*.json` and `accounts_vault.json`
+are git-ignored for a reason; this repo is public.
+
+## Video: what it really is
+
+"ভিডিও স্টুডিও" makes a **motion video**: it takes a keyframe image
+(from Nano Banana Pro / Flow Imagen, or a photo you upload) and animates
+it with ffmpeg (slow zoom/pan) into a 5-second 720p mp4. Image-to-video
+(upload a photo first) works even when the Google session is expired.
+Text-to-video needs a working session to create the first frame. Real
+Veo 3.1 generation via Flow is not wired up yet (`FlowClient.generate_video_flow`
+only submits the job; the Veo polling loop is not implemented), so the UI
+labels the output "মোশন ভিডিও", not "Veo 3.1".
+
 ## Use with Claude Code (Anthropic-compatible gateway)
 
 ```bash

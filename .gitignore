@@ -7,3 +7,9 @@ __pycache__/
 
 uploads/*
 !uploads/.gitkeep
+# Live Google session cookies & account vault — NEVER commit these.
+# The repo is public; cookies are synced at runtime via the 🔑 button in chat.
+cookies_gemini.json
+cookies_flow.json
+cookies.json
+accounts_vault.json
