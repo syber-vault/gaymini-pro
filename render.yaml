@@ -10,5 +10,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.0"
-      - key: PORT
-        value: "10000"
+      # NOTE: do NOT set PORT here — Render injects its own PORT env var and
+      # routes traffic to it. A hardcoded PORT would make the service listen
+      # on the wrong port and fail health checks.
