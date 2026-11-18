@@ -413,34 +413,44 @@ def run_video_job(job_id: str, prompt: str, image_bytes: bytes | None, origin: s
             base_img_path = tmp_in
         else:
             set_progress("Nano Banana Pro Cinematic Engine diye visual frame toiri hocche...")
-            try:
-                import gemini_api_server
-                with gemini_api_server._SLOTS:
-                    async def _gen_frame():
-                        client = await gemini_api_server.get_gemini_client()
-                        return await client.generate_content(
-                            f"Generate an image of: {prompt}",
-                            model=gemini_api_server.Model.ADVANCED_THINKING,
-                            temporary=True
-                        )
-                    f_resp = gemini_api_server._run_coroutine_sync(_gen_frame())
+            # Gemini sometimes answers a keyframe request with text only
+            # (no generated_images) even when the session is fine — the
+            # /generate-image endpoint hits the same flakiness. Retry the
+            # same call a few times before giving up and trying Flow.
+            for _attempt in range(3):
+                try:
+                    import gemini_api_server
+                    with gemini_api_server._SLOTS:
+                        async def _gen_frame():
+                            client = await gemini_api_server.get_gemini_client()
+                            return await client.generate_content(
+                                f"Generate an image of: {prompt}",
+                                model=gemini_api_server.Model.ADVANCED_THINKING,
+                                temporary=True
+                            )
+                        f_resp = gemini_api_server._run_coroutine_sync(_gen_frame())
 
-                    cand_imgs = []
-                    for c in (getattr(f_resp, "candidates", None) or []):
-                        cand_imgs.extend(getattr(c, "generated_images", None) or [])
-                    if cand_imgs:
-                        frame_name = f"vframe-{uuid.uuid4().hex[:8]}.png"
-                        async def _save():
-                            return await cand_imgs[0].save(path=str(UPLOADS_DIR), filename=frame_name, full_size=False)
-                        saved_str = gemini_api_server._run_coroutine_sync(_save())
-                        base_img_path = Path(saved_str)
-                    elif getattr(f_resp, "text", ""):
-                        # Extract any image URL from text
-                        found = gemini_api_server._extract_image_url(f_resp.text)
-                        if found:
-                            base_img_path = gemini_api_server._download_found_image(found)
-            except Exception as ef:
-                logger.warning(f"Nano Banana Pro keyframe generation failed: {ef}")
+                        cand_imgs = []
+                        for c in (getattr(f_resp, "candidates", None) or []):
+                            cand_imgs.extend(getattr(c, "generated_images", None) or [])
+                        if cand_imgs:
+                            frame_name = f"vframe-{uuid.uuid4().hex[:8]}.png"
+                            async def _save():
+                                return await cand_imgs[0].save(path=str(UPLOADS_DIR), filename=frame_name, full_size=False)
+                            saved_str = gemini_api_server._run_coroutine_sync(_save())
+                            base_img_path = Path(saved_str)
+                            break
+                        elif getattr(f_resp, "text", ""):
+                            # Extract any image URL from text
+                            found = gemini_api_server._extract_image_url(f_resp.text)
+                            if found:
+                                base_img_path = gemini_api_server._download_found_image(found)
+                                if base_img_path:
+                                    break
+                except Exception as ef:
+                    logger.warning(f"Nano Banana Pro keyframe generation failed (attempt {_attempt + 1}/3): {ef}")
+                if base_img_path and base_img_path.is_file():
+                    break
 
             # Backup if Gemini didn't return image: try Google Flow Imagen
             if not base_img_path or not base_img_path.is_file():
@@ -491,11 +501,27 @@ def run_video_job(job_id: str, prompt: str, image_bytes: bytes | None, origin: s
             # No keyframe could be made: text-to-video needs a working
             # Gemini/Flow session to create the first frame. Image-to-video
             # (upload a photo first) does not need it and keeps working.
-            err_msg = (
-                "Video toiri kora jayni — prothom frame banano jayni. "
-                "Google Account session expired hoyeche; '🔑 Google & Flow Sync' theke notun cookie sync korun, "
-                "ba ekta chhobi upload diye image-to-video chesta korun."
-            )
+            # NOTE: do not always blame the session — Gemini sometimes
+            # answers with text only even while authenticated. Check the
+            # real account status before telling the user to re-sync.
+            _auth_ok = None
+            try:
+                import gemini_api_server as _gas
+                _auth_ok = getattr(_gas, "_LAST_ACCOUNT_STATUS", None) == 1000
+            except Exception:
+                _auth_ok = None
+            if _auth_ok:
+                err_msg = (
+                    "Video toiri kora jayni — prothom frame banano jayni. "
+                    "Google session thik ache, kintu Gemini ebar chhobi dite pareni. "
+                    "Abar chesta korun, ba ekta chhobi upload diye image-to-video korun."
+                )
+            else:
+                err_msg = (
+                    "Video toiri kora jayni — prothom frame banano jayni. "
+                    "Google Account session expired hoyeche; '🔑 Google & Flow Sync' theke notun cookie sync korun, "
+                    "ba ekta chhobi upload diye image-to-video chesta korun."
+                )
             with _JOBS_LOCK:
                 _VIDEO_JOBS[job_id] = {
                     "status": "error",
