@@ -697,7 +697,7 @@ def chat_page():
 # ---------------------------------------------------------------------------
 UPLOADS_DIR = BASE_DIR / "uploads"
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-_SAFE_UPLOAD_NAME = re.compile(r"^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif)$", re.IGNORECASE)
+_SAFE_UPLOAD_NAME = re.compile(r"^[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp|gif|mp4|webm)$", re.IGNORECASE)
 
 
 @app.route("/uploads/<name>", methods=["GET"])
@@ -707,7 +707,16 @@ def serve_upload(name):
     path = UPLOADS_DIR / name
     if not path.is_file():
         return jsonify({"error": "not found"}), 404
-    return send_file(str(path))
+    ext = Path(name).suffix.lower()
+    mime = {
+        ".mp4": "video/mp4", ".webm": "video/webm",
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif"
+    }.get(ext, "application/octet-stream")
+    resp = send_file(str(path), mimetype=mime)
+    resp.headers["Accept-Ranges"] = "bytes"
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @app.route("/edit-image", methods=["POST"])
