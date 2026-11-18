@@ -1258,7 +1258,7 @@ async function sendMessage() {
     return;
   }
 
-  // ---- ভিডিও মোড (মোশন ভিডিও: ৮ সেকেন্ড, 1080p, মিউজিক সহ) ----
+  // ---- ভিডিও মোড (মোশন ভিডিও: ৮ সেকেন্ড, 720p, মিউজিক সহ) ----
   if (mode === 'video') {
     if (!text && !attachedImage) {
       status.textContent = 'ভিডিওর জন্য প্রম্পট লিখো (যেমন: cinematic drone shot of cyberpunk city in rain)';
@@ -1315,7 +1315,7 @@ async function sendMessage() {
       if (!done) throw new Error('ভিডিও তৈরিতে অনেক সময় লাগছে — একটু পরে আবার চেষ্টা করো');
 
       thinking.parentElement.parentElement.remove();
-      addVideoMsg(done.video_url, 'মোশন ভিডিও ✓ (৮ সেকেন্ড, 1080p, মিউজিক সহ)', prompt);
+      addVideoMsg(done.video_url, 'মোশন ভিডিও ✓ (৮ সেকেন্ড, 720p, মিউজিক সহ)', prompt);
       history.push({ role: 'assistant', content: '[ভিডিও সম্পন্ন হয়েছে: ' + done.video_url + ']' });
       saveHistory();
       status.textContent = 'ভিডিও সম্পন্ন হয়েছে ✓';

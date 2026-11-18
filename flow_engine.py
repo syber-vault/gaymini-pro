@@ -464,11 +464,23 @@ def run_video_job(job_id: str, prompt: str, image_bytes: bytes | None, origin: s
                     logger.warning(f"Flow image fallback for video failed: {ef2}")
 
         if base_img_path and base_img_path.is_file():
-            set_progress("Cinematic animation compile hocche (1080p 25fps H.264 + music)...")
+            set_progress("Cinematic animation compile hocche (8s 720p H.264 + music)...")
             try:
+                # Downscale the base frame first: a big phone photo fed
+                # straight into zoompan OOM-kills Render's free tier
+                # (512 MB). 1280px input keeps the encode light.
+                small_base = UPLOADS_DIR / f"vbase-{uuid.uuid4().hex[:8]}.jpg"
+                subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(base_img_path),
+                                "-vf", "scale='min(1280,iw)':-2", "-q:v", "3", str(small_base)],
+                               timeout=60, check=True)
+                if small_base.is_file() and small_base.stat().st_size > 0:
+                    base_img_path = small_base
                 out_vid = UPLOADS_DIR / f"motion-{uuid.uuid4().hex[:8]}.mp4"
-                # 8s 1080p slow cinematic zoom + gentle ambient music bed.
-                # NOTE: this is still a motion video (one still image
+                # 8s 720p slow cinematic zoom + gentle ambient music bed.
+                # NOTE: 1080p was tried but it OOM-crashes Render's free
+                # tier (512 MB) mid-encode — the container restarts and the
+                # job is lost. 720p is the most the free tier can encode
+                # reliably. This is still a motion video (one still image
                 # animated with ffmpeg), NOT Veo — Veo with native audio
                 # needs a live signed-in Flow browser tab / official API
                 # key, which a headless server cannot do. The music bed
@@ -480,7 +492,7 @@ def run_video_job(job_id: str, prompt: str, image_bytes: bytes | None, origin: s
                     "-f", "lavfi", "-i", "sine=frequency=220:duration=8",
                     "-f", "lavfi", "-i", "sine=frequency=277.18:duration=8",
                     "-filter_complex",
-                    "[0:v]zoompan=z='min(zoom+0.0012,1.25)':d=200:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps=25,format=yuv420p[v];"
+                    "[0:v]zoompan=z='min(zoom+0.0012,1.25)':d=200:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720:fps=25,format=yuv420p[v];"
                     "[1:a][2:a][3:a][4:a]amix=inputs=4:duration=first:dropout_transition=0,volume=0.12,afade=t=in:st=0:d=1,afade=t=out:st=7:d=1[a]",
                     "-map", "[v]", "-map", "[a]",
                     "-t", "8", "-c:v", "libx264", "-pix_fmt", "yuv420p",

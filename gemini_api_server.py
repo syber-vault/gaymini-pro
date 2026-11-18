@@ -1688,7 +1688,7 @@ API_V1_DOCS = [
     {"method": "POST", "path": "/api/v1/image", "desc": "New image (Nano Banana Pro; model=flow tries Flow Imagen first). Form {prompt, model?, origin} → {job}. Poll /api/v1/image-status/<job>."},
     {"method": "POST", "path": "/api/v1/edit", "desc": "Edit an uploaded image with the Azad editor (works without Google cookies). Multipart {image, prompt, origin} → {job}. Poll /api/v1/image-status/<job>."},
     {"method": "POST", "path": "/api/v1/edit-google", "desc": "Edit an uploaded image with Gemini/Nano Banana Pro (needs a valid Google session; falls back to the Azad editor automatically). Multipart {image, prompt, origin} → {job}."},
-    {"method": "POST", "path": "/api/v1/video", "desc": "Video. Form {prompt, origin} (+ optional image file) → {job}. Text-to-video makes a keyframe with Nano Banana Pro, then an 8s 1080p motion video with music. Poll /api/v1/video-status/<job>. NOTE: motion video, not Veo — Veo with native audio needs a live Flow browser tab."},
+    {"method": "POST", "path": "/api/v1/video", "desc": "Video. Form {prompt, origin} (+ optional image file) → {job}. Text-to-video makes a keyframe with Nano Banana Pro, then an 8s 720p motion video with music. Poll /api/v1/video-status/<job>. NOTE: motion video, not Veo — Veo with native audio needs a live Flow browser tab."},
     {"method": "GET", "path": "/api/v1/image-status/<job>", "desc": "Image/edit job status → {status: working|done|error, image_url?, message?}."},
     {"method": "GET", "path": "/api/v1/video-status/<job>", "desc": "Video job status → {status: working|done|error, video_url?, error?}."},
     {"method": "GET", "path": "/api/v1/jobs/<job>", "desc": "Unified job status — checks image/edit jobs first, then video jobs."},
@@ -1763,7 +1763,7 @@ curl -X POST $BASE/api/v1/video -F prompt="a cat in rain" -F origin=$BASE
 curl $BASE/api/v1/video-status/&lt;job&gt;
 
 curl -X POST $BASE/api/v1/edit -F image=@photo.jpg -F prompt="make it sunset" -F origin=$BASE</pre>
-<p>ভিডিও এখন ৮ সেকেন্ড, 1080p, মিউজিকসহ মোশন ভিডিও (Veo নয় — আসল Veo-তে নিজের
+<p>ভিডিও এখন ৮ সেকেন্ড, 720p, মিউজিকসহ মোশন ভিডিও (Veo নয় — আসল Veo-তে নিজের
 অডিওসহ ভিডিও বানাতে লাইভ Flow ব্রাউজার ট্যাব বা অফিসিয়াল API key লাগে)।</p>
 </body></html>"""
 
